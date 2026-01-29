@@ -2446,7 +2446,7 @@ impl<T: Config> Pallet<T> {
 		use frame_support::traits::tokens::{Fortitude, Precision, Preservation};
 
 		if amount.is_zero() {
-			return Ok(())
+			return Ok(());
 		}
 
 		match (exec_config.collect_deposit_from_hold.is_some(), hold_reason) {
@@ -2499,7 +2499,7 @@ impl<T: Config> Pallet<T> {
 		};
 
 		if amount.is_zero() {
-			return Ok(())
+			return Ok(());
 		}
 
 		let hold_reason = hold_reason.into();

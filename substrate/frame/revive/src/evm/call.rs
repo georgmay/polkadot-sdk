@@ -85,17 +85,17 @@ impl GenericTransaction {
 			(Some(chain_id), ..) =>
 				if chain_id != <T as Config>::ChainId::get().into() {
 					log::debug!(target: LOG_TARGET, "Invalid chain_id {chain_id:?}");
-					return Err(InvalidTransaction::Call)
+					return Err(InvalidTransaction::Call);
 				},
 			(None, ..) => {
 				log::debug!(target: LOG_TARGET, "Invalid chain_id None");
-				return Err(InvalidTransaction::Call)
+				return Err(InvalidTransaction::Call);
 			},
 		}
 
 		let Some(gas) = self.gas else {
 			log::debug!(target: LOG_TARGET, "No gas provided");
-			return Err(InvalidTransaction::Call)
+			return Err(InvalidTransaction::Call);
 		};
 
 		// EIP-7702: Validate that type 0x04 transactions have a non-null destination
@@ -200,7 +200,7 @@ impl GenericTransaction {
 			let (code, data) = if data.starts_with(&polkavm_common::program::BLOB_MAGIC) {
 				let Some((code, data)) = extract_code_and_data(&data) else {
 					log::debug!(target: LOG_TARGET, "Failed to extract polkavm code & data");
-					return Err(InvalidTransaction::Call)
+					return Err(InvalidTransaction::Call);
 				};
 				(code, data)
 			} else {
