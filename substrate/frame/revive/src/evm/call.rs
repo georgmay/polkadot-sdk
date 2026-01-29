@@ -102,13 +102,13 @@ impl GenericTransaction {
 		if let Some(super::Byte(TYPE_EIP7702)) = self.r#type.as_ref() {
 			if self.to.is_none() {
 				log::debug!(target: LOG_TARGET, "EIP-7702 transactions require non-null destination");
-				return Err(InvalidTransaction::Call)
+				return Err(InvalidTransaction::Call);
 			}
 
 			// EIP-7702: Validate that type 0x04 transactions have non-empty authorization list
 			if self.authorization_list.is_empty() {
 				log::debug!(target: LOG_TARGET, "EIP-7702 transactions require non-empty authorization list");
-				return Err(InvalidTransaction::Call)
+				return Err(InvalidTransaction::Call);
 			}
 		}
 
