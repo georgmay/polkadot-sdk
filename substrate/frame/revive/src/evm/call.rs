@@ -85,30 +85,30 @@ impl GenericTransaction {
 			(Some(chain_id), ..) =>
 				if chain_id != <T as Config>::ChainId::get().into() {
 					log::debug!(target: LOG_TARGET, "Invalid chain_id {chain_id:?}");
-					return Err(InvalidTransaction::Call);
+					return Err(InvalidTransaction::Call)
 				},
 			(None, ..) => {
 				log::debug!(target: LOG_TARGET, "Invalid chain_id None");
-				return Err(InvalidTransaction::Call);
+				return Err(InvalidTransaction::Call)
 			},
 		}
 
 		let Some(gas) = self.gas else {
 			log::debug!(target: LOG_TARGET, "No gas provided");
-			return Err(InvalidTransaction::Call);
+			return Err(InvalidTransaction::Call)
 		};
 
 		// EIP-7702: Validate that type 0x04 transactions have a non-null destination
 		if let Some(super::Byte(TYPE_EIP7702)) = self.r#type.as_ref() {
 			if self.to.is_none() {
 				log::debug!(target: LOG_TARGET, "EIP-7702 transactions require non-null destination");
-				return Err(InvalidTransaction::Call);
+				return Err(InvalidTransaction::Call)
 			}
 
 			// EIP-7702: Validate that type 0x04 transactions have non-empty authorization list
 			if self.authorization_list.is_empty() {
 				log::debug!(target: LOG_TARGET, "EIP-7702 transactions require non-empty authorization list");
-				return Err(InvalidTransaction::Call);
+				return Err(InvalidTransaction::Call)
 			}
 		}
 
@@ -165,7 +165,7 @@ impl GenericTransaction {
 
 				if !value.is_zero() {
 					log::debug!(target: LOG_TARGET, "Runtime pallets address cannot be called with value");
-					return Err(InvalidTransaction::Call);
+					return Err(InvalidTransaction::Call)
 				}
 
 				crate::Call::eth_substrate_call::<T> { call: Box::new(call), transaction_encoded }
@@ -200,7 +200,7 @@ impl GenericTransaction {
 			let (code, data) = if data.starts_with(&polkavm_common::program::BLOB_MAGIC) {
 				let Some((code, data)) = extract_code_and_data(&data) else {
 					log::debug!(target: LOG_TARGET, "Failed to extract polkavm code & data");
-					return Err(InvalidTransaction::Call);
+					return Err(InvalidTransaction::Call)
 				};
 				(code, data)
 			} else {
