@@ -1384,7 +1384,7 @@ pub mod pallet {
 			transaction_encoded: Vec<u8>,
 			effective_gas_price: U256,
 			encoded_len: u32,
-			authorization_list: Vec<evm::SignedAuthorizationListEntry>,
+			authorization_list: Vec<evm::AuthorizationListEntry>,
 		) -> DispatchResultWithPostInfo {
 			let signer = Self::ensure_eth_signed(origin)?;
 			let origin = OriginFor::<T>::signed(signer.clone());
