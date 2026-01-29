@@ -1401,11 +1401,13 @@ pub mod pallet {
 					&mut meter,
 				)?;
 
-				let consumed_weight = meter.consumed();
-				let gas_scale: u64 = T::GasScale::get().into();
-				let auth_gas = consumed_weight.ref_time().saturating_div(gas_scale);
+				let weight_fee = T::FeeInfo::weight_to_fee(&meter.consumed());
+				let auth_gas = metering::SignedGas::<T>::from_weight_fee(weight_fee)
+					.to_ethereum_gas()
+					.unwrap_or_default();
 
-				let adjusted_gas_limit = eth_gas_limit.saturating_sub(U256::from(auth_gas));
+				let adjusted_gas_limit =
+					eth_gas_limit.saturating_sub(U256::from(auth_gas.saturated_into::<u128>()));
 				let adjusted_weight_limit = meter.remaining();
 
 				(adjusted_gas_limit, adjusted_weight_limit)
@@ -1917,11 +1919,12 @@ impl<T: Config> Pallet<T> {
 					EthTransactError::Message(format!("Failed to process authorizations: {err:?}"))
 				})?;
 
-			let consumed_weight = meter.consumed();
-			let gas_scale: u64 = T::GasScale::get().into();
-			consumed_weight.ref_time().saturating_div(gas_scale)
+			let weight_fee = T::FeeInfo::weight_to_fee(&meter.consumed());
+			metering::SignedGas::<T>::from_weight_fee(weight_fee)
+				.to_ethereum_gas()
+				.unwrap_or_default()
 		} else {
-			0
+			Default::default()
 		};
 
 		let extract_error = |err| {
@@ -2076,8 +2079,7 @@ impl<T: Config> Pallet<T> {
 		if !rest.is_zero() {
 			eth_gas = eth_gas.saturating_add(1_u32.into());
 		}
-		// Add gas consumed by EIP-7702 authorization processing
-		eth_gas = eth_gas.saturating_add(U256::from(auth_gas_used));
+		eth_gas = eth_gas.saturating_add(U256::from(auth_gas_used.saturated_into::<u128>()));
 
 		log::debug!(target: LOG_TARGET, "\
 			dry_run_eth_transact finished: \
