@@ -1344,6 +1344,46 @@ pub mod pallet {
 			transaction_encoded: Vec<u8>,
 			effective_gas_price: U256,
 			encoded_len: u32,
+		) -> DispatchResultWithPostInfo {
+			Self::eth_call_with_authorization_list(
+				origin,
+				dest,
+				value,
+				weight_limit,
+				eth_gas_limit,
+				data,
+				transaction_encoded,
+				effective_gas_price,
+				encoded_len,
+				Vec::new(),
+			)
+		}
+
+		/// Same as [`Self::eth_call`], but with an EIP-7702 authorization list.
+		///
+		/// This allows EOAs to temporarily delegate their account to a contract
+		/// for the duration of the transaction.
+		///
+		/// # Parameters
+		///
+		/// Same as [`Self::eth_call`], plus:
+		/// * `authorization_list`: List of EIP-7702 authorization tuples
+		#[pallet::call_index(14)]
+		#[pallet::weight(
+			T::WeightInfo::eth_call(Pallet::<T>::has_dust(*value).into())
+			.saturating_add(*weight_limit)
+			.saturating_add(T::WeightInfo::on_finalize_block_per_tx(transaction_encoded.len() as u32))
+		)]
+		pub fn eth_call_with_authorization_list(
+			origin: OriginFor<T>,
+			dest: H160,
+			value: U256,
+			weight_limit: Weight,
+			eth_gas_limit: U256,
+			data: Vec<u8>,
+			transaction_encoded: Vec<u8>,
+			effective_gas_price: U256,
+			encoded_len: u32,
 			authorization_list: Vec<evm::SignedAuthorizationListEntry>,
 		) -> DispatchResultWithPostInfo {
 			let signer = Self::ensure_eth_signed(origin)?;
@@ -1353,30 +1393,27 @@ pub mod pallet {
 
 			let (eth_gas_limit, weight_limit) = if !authorization_list.is_empty() {
 				let chain_id = U256::from(T::ChainId::get());
-				let (new_accounts, existing_accounts) =
-					evm::eip7702::process_authorizations::<T>(&authorization_list, chain_id);
+				let mut meter = WeightMeter::with_limit(weight_limit);
 
-				let auth_count = authorization_list.len() as u64;
-				let single_auth_weight = T::WeightInfo::process_single_authorization();
-				let auth_weight = single_auth_weight
-					.saturating_mul(auth_count)
-					.saturating_add(T::WeightInfo::apply_delegations_existing(
-						existing_accounts as u32,
-					))
-					.saturating_add(T::WeightInfo::apply_delegations_new(new_accounts as u32));
+				evm::eip7702::process_authorizations::<T>(
+					&authorization_list,
+					chain_id,
+					&mut meter,
+				)?;
 
+				let consumed_weight = meter.consumed();
 				let gas_scale: u64 = T::GasScale::get().into();
-				let auth_gas = auth_weight.ref_time().saturating_div(gas_scale);
+				let auth_gas = consumed_weight.ref_time().saturating_div(gas_scale);
 
 				let adjusted_gas_limit = eth_gas_limit.saturating_sub(U256::from(auth_gas));
-				let adjusted_weight_limit = weight_limit.saturating_sub(auth_weight);
+				let adjusted_weight_limit = meter.remaining();
 
 				(adjusted_gas_limit, adjusted_weight_limit)
 			} else {
 				(eth_gas_limit, weight_limit)
 			};
 
-			let mut call = Call::<T>::eth_call {
+			let mut call = Call::<T>::eth_call_with_authorization_list {
 				dest,
 				value,
 				weight_limit,
@@ -1729,7 +1766,7 @@ impl<T: Config> Pallet<T> {
 						let executable = ContractBlob::from_evm_init_code(code, origin)?;
 						executable
 					} else {
-						return Err(<Error<T>>::CodeRejected.into())
+						return Err(<Error<T>>::CodeRejected.into());
 					},
 				Code::Existing(code_hash) => {
 					let executable = ContractBlob::from_storage(code_hash, &mut transaction_meter)?;
@@ -1837,6 +1874,7 @@ impl<T: Config> Pallet<T> {
 		let input = tx.input.clone().to_vec();
 		let from = tx.from;
 		let to = tx.to;
+		let authorization_list = core::mem::take(&mut tx.authorization_list);
 
 		// we need to parse the weight from the transaction so that it is run
 		// using the exact weight limit passed by the eth wallet
@@ -1868,6 +1906,23 @@ impl<T: Config> Pallet<T> {
 		// the deposit is done when the transaction is transformed from an `eth_transact`
 		// we emulate this behavior for the dry-run here
 		T::FeeInfo::deposit_txfee(T::Currency::issue(fees));
+
+		// Process EIP-7702 authorization list if present
+		let auth_gas_used = if !authorization_list.is_empty() {
+			let chain_id = U256::from(T::ChainId::get());
+			let mut meter = WeightMeter::new();
+
+			evm::eip7702::process_authorizations::<T>(&authorization_list, chain_id, &mut meter)
+				.map_err(|err| {
+					EthTransactError::Message(format!("Failed to process authorizations: {err:?}"))
+				})?;
+
+			let consumed_weight = meter.consumed();
+			let gas_scale: u64 = T::GasScale::get().into();
+			consumed_weight.ref_time().saturating_div(gas_scale)
+		} else {
+			0
+		};
 
 		let extract_error = |err| {
 			if err == Error::<T>::StorageDepositNotEnoughFunds.into() {
@@ -2021,6 +2076,8 @@ impl<T: Config> Pallet<T> {
 		if !rest.is_zero() {
 			eth_gas = eth_gas.saturating_add(1_u32.into());
 		}
+		// Add gas consumed by EIP-7702 authorization processing
+		eth_gas = eth_gas.saturating_add(U256::from(auth_gas_used));
 
 		log::debug!(target: LOG_TARGET, "\
 			dry_run_eth_transact finished: \
@@ -2184,7 +2241,7 @@ impl<T: Config> Pallet<T> {
 			BytecodeType::Pvm
 		} else {
 			if !T::AllowEVMBytecode::get() {
-				return Err(<Error<T>>::CodeRejected.into())
+				return Err(<Error<T>>::CodeRejected.into());
 			}
 			BytecodeType::Evm
 		};
@@ -2332,7 +2389,7 @@ impl<T: Config> Pallet<T> {
 	pub fn code(address: &H160) -> Vec<u8> {
 		use precompiles::{All, Precompiles};
 		if let Some(code) = <All<T>>::code(address.as_fixed_bytes()) {
-			return code.into()
+			return code.into();
 		}
 		AccountInfo::<T>::load_contract(&address)
 			.and_then(|contract| <PristineCode<T>>::get(contract.code_hash))
@@ -2534,14 +2591,14 @@ impl<T: Config> Pallet<T> {
 	/// This enforces EIP-3607.
 	fn ensure_non_contract_if_signed(origin: &OriginFor<T>) -> DispatchResult {
 		if DebugSettings::bypass_eip_3607::<T>() {
-			return Ok(())
+			return Ok(());
 		}
 		let Some(address) = origin
 			.as_system_ref()
 			.and_then(|o| o.as_signed())
 			.map(<T::AddressMapper as AddressMapper<T>>::to_address)
 		else {
-			return Ok(())
+			return Ok(());
 		};
 		if exec::is_precompile::<T, ContractBlob<T>>(&address) ||
 			<AccountInfo<T>>::is_contract(&address)
